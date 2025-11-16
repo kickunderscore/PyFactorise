@@ -3,6 +3,7 @@
 from math import sqrt, log2, ceil, floor
 import random
 import sys
+import time
 from builtins import ValueError
 
 # gcd was added to math in Python 3.5 and removed from fractions in 3.9
@@ -380,6 +381,10 @@ def siqs_trial_divide(a, factor_base):
             divisors_idx.append((i, exp))
         if a == 1:
             return divisors_idx
+        # nearly double speed by also using the '-1 solutions' (requires an additional
+        # exponent count of one for the pseudo factor -1 in every row of the matrix).
+        if a == -1:
+            return divisors_idx
     return None
 
 
@@ -406,11 +411,16 @@ def siqs_trial_division(n, sieve_array, factor_base, smooth_relations, g, h, m,
 
 
 def siqs_build_matrix(factor_base, smooth_relations):
-    """Build the matrix for the linear algebra step of the Quadratic Sieve."""
+    """Build the matrix for the linear algebra step of the Quadratic Sieve.
+    Stores an additional exponent value of one for the pseudo 
+    factor -1 in each row of the matrix for which sr.v is negative.
+    """
     fb = len(factor_base)
     M = []
     for sr in smooth_relations:
-        mi = [0] * fb
+        mi = [0] * (fb + 1)
+        if sr[1] < 0:
+            mi[fb] = 1
         for j, exp in sr[2]:
             mi[j] = exp % 2
         M.append(mi)
@@ -488,6 +498,8 @@ def siqs_calc_sqrts(square_indices, smooth_relations):
     for idx in square_indices:
         res[0] *= smooth_relations[idx][0]
         res[1] *= smooth_relations[idx][1]
+    # Python >= 3.10 may require explicit setting for digit counts greater 4300...
+    #sys.set_int_max_str_digits(2 * 4300)
     res[1] = sqrt_int(res[1])
     return res
 
@@ -945,6 +957,8 @@ def factorise(n):
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         N = int(sys.argv[1])
+        start = time.time()
         print("\nSuccess. Prime factors: %s" % factorise(N))
+        print("\nDuration: " + str(time.time() - start) + " seconds")
     else:
         print("Usage: factorize.py <N>", file=sys.stderr)
