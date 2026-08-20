@@ -3,6 +3,7 @@
 from math import sqrt, log2, ceil, floor
 import random
 import sys
+import time
 from builtins import ValueError
 
 # gcd was added to math in Python 3.5 and removed from fractions in 3.9
@@ -65,6 +66,7 @@ class FactorBasePrime:
         self.tmem = tmem
         self.lp = lp
         self.ainv = None
+        self.polynomialCycle = 0
 
 
 def lowest_set_bit(a):
@@ -228,10 +230,16 @@ def siqs_factor_base_primes(n, nf):
     return factor_base
 
 
+# marker for base polynomial cycle (caching 'a % fb.p != 0' state of fb items)
+global s_polynomialCycle
+s_polynomialCycle = 0
+
 def siqs_find_first_poly(n, m, factor_base):
     """Compute the first of a set of polynomials for the Self-
     Initialising Quadratic Sieve.
     """
+    global s_polynomialCycle
+
     p_min_i = None
     p_max_i = None
     for i, fb in enumerate(factor_base):
@@ -280,8 +288,10 @@ def siqs_find_first_poly(n, m, factor_base):
 
     s = len(q)
     B = []
+    s_polynomialCycle += 1
     for l in range(s):
         fb_l = factor_base[q[l]]
+        fb_l.polynomialCycle = s_polynomialCycle
         q_l = fb_l.p
         assert a % q_l == 0
         gamma = (fb_l.tmem * inv_mod(a // q_l, q_l)) % q_l
@@ -301,7 +311,7 @@ def siqs_find_first_poly(n, m, factor_base):
     g = Polynomial([b * b - n, 2 * a * b, a * a], a, b_orig)
     h = Polynomial([b, a])
     for fb in factor_base:
-        if a % fb.p != 0:
+        if fb.polynomialCycle < s_polynomialCycle:
             fb.ainv = inv_mod(a, fb.p)
             fb.soln1 = (fb.ainv * (fb.tmem - b)) % fb.p
             fb.soln2 = (fb.ainv * (-fb.tmem - b)) % fb.p
@@ -313,6 +323,8 @@ def siqs_find_next_poly(n, factor_base, i, g, B):
     """Compute the (i+1)-th polynomials for the Self-Initialising
     Quadratic Sieve, given that g is the i-th polynomial.
     """
+    global s_polynomialCycle
+
     v = lowest_set_bit(i) + 1
     z = -1 if ceil(i / (2 ** v)) % 2 == 1 else 1
     b = (g.b + 2 * z * B[v - 1]) % g.a
@@ -325,7 +337,7 @@ def siqs_find_next_poly(n, factor_base, i, g, B):
     g = Polynomial([b * b - n, 2 * a * b, a * a], a, b_orig)
     h = Polynomial([b, a])
     for fb in factor_base:
-        if a % fb.p != 0:
+        if fb.polynomialCycle < s_polynomialCycle:
             fb.soln1 = (fb.ainv * (fb.tmem - b)) % fb.p
             fb.soln2 = (fb.ainv * (-fb.tmem - b)) % fb.p
 
@@ -334,15 +346,16 @@ def siqs_find_next_poly(n, factor_base, i, g, B):
 
 def siqs_sieve(factor_base, m):
     """Perform the sieving step of the SIQS. Return the sieve array."""
+    global s_polynomialCycle
     sieve_array = [0] * (2 * m + 1)
     for fb in factor_base:
-        if fb.soln1 is None:
+        if fb.polynomialCycle == s_polynomialCycle:
             continue
         p = fb.p
-        i_start_1 = -((m + fb.soln1) // p)
-        a_start_1 = fb.soln1 + i_start_1 * p
         lp = fb.lp
         if p > 20:
+            i_start_1 = -((m + fb.soln1) // p)
+            a_start_1 = fb.soln1 + i_start_1 * p
             for a in range(a_start_1 + m, 2 * m + 1, p):
                 sieve_array[a] += lp
 
@@ -367,6 +380,10 @@ def siqs_trial_divide(a, factor_base):
                 exp += 1
             divisors_idx.append((i, exp))
         if a == 1:
+            return divisors_idx
+        # nearly double speed by also using the '-1 solutions' (requires an additional
+        # exponent count of one for the pseudo factor -1 in every row of the matrix).
+        if a == -1:
             return divisors_idx
     return None
 
@@ -394,11 +411,16 @@ def siqs_trial_division(n, sieve_array, factor_base, smooth_relations, g, h, m,
 
 
 def siqs_build_matrix(factor_base, smooth_relations):
-    """Build the matrix for the linear algebra step of the Quadratic Sieve."""
+    """Build the matrix for the linear algebra step of the Quadratic Sieve.
+    Stores an additional exponent value of one for the pseudo 
+    factor -1 in each row of the matrix for which sr.v is negative.
+    """
     fb = len(factor_base)
     M = []
     for sr in smooth_relations:
-        mi = [0] * fb
+        mi = [0] * (fb + 1)
+        if sr[1] < 0:
+            mi[fb] = 1
         for j, exp in sr[2]:
             mi[j] = exp % 2
         M.append(mi)
@@ -476,6 +498,8 @@ def siqs_calc_sqrts(square_indices, smooth_relations):
     for idx in square_indices:
         res[0] *= smooth_relations[idx][0]
         res[1] *= smooth_relations[idx][1]
+    # Python >= 3.10 may require explicit setting for digit counts greater 4300...
+    #sys.set_int_max_str_digits(2 * 4300)
     res[1] = sqrt_int(res[1])
     return res
 
@@ -933,6 +957,8 @@ def factorise(n):
 if __name__ == '__main__':
     if len(sys.argv) > 1:
         N = int(sys.argv[1])
+        start = time.time()
         print("\nSuccess. Prime factors: %s" % factorise(N))
+        print("\nDuration: " + str(time.time() - start) + " seconds")
     else:
         print("Usage: factorize.py <N>", file=sys.stderr)
